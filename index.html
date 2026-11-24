@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Escáner de códigos</title>
+<script src="https://cdn.jsdelivr.net/npm/@zxing/library@0.21.3/umd/index.min.js"></script>
+<style>
+  body { font-family: system-ui, -apple-system, sans-serif; margin: 0; padding: 16px; background: #f5f5f5; color: #111; }
+  h1 { font-size: 20px; margin: 0 0 12px; }
+  video { width: 100%; max-height: 45vh; background: #000; border-radius: 8px; object-fit: cover; }
+  label { display: block; margin-top: 12px; font-weight: 600; font-size: 14px; }
+  input, select, textarea, button { width: 100%; box-sizing: border-box; font-size: 16px; padding: 10px; margin-top: 4px; border: 1px solid #bbb; border-radius: 8px; background: #fff; }
+  button { background: #1565c0; color: #fff; border: 0; font-weight: 600; margin-top: 12px; }
+  button.sec { background: #e0e0e0; color: #111; }
+  #status { margin-top: 12px; padding: 10px; border-radius: 8px; min-height: 1em; }
+  .ok { background: #e8f5e9; }
+  .err { background: #ffebee; }
+</style>
+</head>
+<body>
+<h1>Escáner de códigos</h1>
+
+<video id="video" playsinline muted></video>
+<button id="btnCam" class="sec" type="button">Iniciar cámara</button>
+
+<form id="form">
+  <label>Tipo
+    <select id="tipo">
+      <option>Bodega</option>
+      <option>Medidor</option>
+    </select>
+  </label>
+  <label>Código (EAN-13 o Code 128)
+    <input id="codigo" required placeholder="Escanea o escribe">
+  </label>
+  <label>Formato
+    <input id="formato" readonly>
+  </label>
+  <label>Cantidad / lectura
+    <input id="cantidad" type="number" step="any" value="1" required>
+  </label>
+  <label>Usuario
+    <input id="usuario" required>
+  </label>
+  <label>Notas
+    <textarea id="notas" rows="2"></textarea>
+  </label>
+  <button type="submit">Guardar</button>
+</form>
+
+<div id="status"></div>
+
+<script>
+  const SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbz5ALZwKkXaDRQgN8Kbv4dHB9mqd8CSuHvkfdC1fq17nZcxvb8oUZtIBRYJhaeqTXlrFg/exec';
+  const TOKEN = 'ESC-7mQ2xL9pRt4wZ8kN3bH6';
+  const HOJA = 'Escaneos';
+
+  const $ = id => document.getElementById(id);
+  const hints = new Map([[ZXing.DecodeHintType.POSSIBLE_FORMATS, [ZXing.BarcodeFormat.EAN_13, ZXing.BarcodeFormat.CODE_128]]]);
+  const reader = new ZXing.BrowserMultiFormatReader(hints);
+  let controls = null;
+
+  $('usuario').value = localStorage.getItem('usuario') || '';
+  $('tipo').value = localStorage.getItem('tipo') || 'Bodega';
+
+  function setStatus(msg, cls) {
+    const s = $('status');
+    s.textContent = msg;
+    s.className = cls || '';
+  }
+
+  async function startCam() {
+    if (controls) return;
+    try {
+      controls = await reader.decodeFromConstraints(
+        { video: { facingMode: { ideal: 'environment' } } },
+        $('video'),
+        (result) => {
+          if (result) {
+            $('codigo').value = result.getText();
+            $('formato').value = ZXing.BarcodeFormat[result.getBarcodeFormat()] || String(result.getBarcodeFormat());
+            if (navigator.vibrate) navigator.vibrate(100);
+            setStatus('Código leído: ' + result.getText(), 'ok');
+            stopCam();
+          }
+        }
+      );
+      $('btnCam').textContent = 'Detener cámara';
+    } catch (e) {
+      controls = null;
+      setStatus('No se pudo abrir la cámara: ' + e.message + '. Revisa los permisos del navegador.', 'err');
+    }
+  }
+
+  function stopCam() {
+    if (controls) { controls.stop(); controls = null; }
+    $('btnCam').textContent = 'Iniciar cámara';
+  }
+
+  $('btnCam').onclick = () => (controls ? stopCam() : startCam());
+
+  $('form').onsubmit = async (e) => {
+    e.preventDefault();
+    const usuario = $('usuario').value.trim();
+    localStorage.setItem('usuario', usuario);
+    localStorage.setItem('tipo', $('tipo').value);
+    const body = {
+      token: TOKEN,
+      hoja: HOJA,
+      tipo: $('tipo').value,
+      codigo: $('codigo').value.trim(),
+      formato: $('formato').value,
+      cantidad: $('cantidad').value,
+      usuario: usuario,
+      notas: $('notas').value.trim()
+    };
+    setStatus('Guardando...');
+    try {
+      const r = await fetch(SCRIPT_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        body: JSON.stringify(body)
+      });
+      const j = await r.json();
+      if (j.ok) {
+        setStatus('Guardado en la hoja.', 'ok');
+        $('codigo').value = '';
+        $('formato').value = '';
+        $('notas').value = '';
+      } else {
+        setStatus('Error: ' + j.error, 'err');
+      }
+    } catch (err) {
+      setStatus('Error de red: ' + err.message, 'err');
+    }
+  };
+</script>
+</body>
+</html>
